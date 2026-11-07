@@ -1,0 +1,69 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+
+include /usr/share/pietoolchain/rules.mk
+
+MIG := $(TOOLCHAIN)/prefix/bin/mig
+.SUFFIXES:
+
+FW      := System/Library/Frameworks/IOKit.framework
+GEN     := $(OBJ)/derived
+SOURCES := IOKitLib.c IOCFSerialize.c IOCFUnserialize.tab.c IOCFURLAccess.c \
+	IODataQueueClient.c IOCircularDataQueue.c IOMIGMachPort.c
+OBJS    := $(patsubst %.c,$(OBJ)/%.o,$(SOURCES)) $(OBJ)/iokitmig64.o $(OBJ)/IOTrap.o \
+	$(OBJ)/IOPowerSources.o
+FLAGS   := $(BASE_CFLAGS) -DAPPLE -D_ANSI_C_SOURCE -Dvolatile=__volatile -DHAVE_CFPLUGIN \
+	-DHAVE_CFURLACCESS -I$(GEN) -I$(SRCROOT) \
+	-isystem $(SDK)/System/Library/Frameworks/System.framework/PrivateHeaders \
+	-isystem $(SDK)/usr/local/include -Wno-deprecated-declarations -Wno-error=int-conversion
+DYLIB   := $(OBJ)/IOKit
+PUBLIC_HEADERS := IOCFSerialize.h IOCFUnserialize.h IOCFPlugIn.h IOCFURLAccess.h IOCFBundle.h \
+	IODataQueueClient.h IOKitLib.h
+PRIVATE_HEADERS := IOKitLibPrivate.h IOMIGMachPort.h
+PS_HEADERS := IOPowerSources.h IOPSKeys.h
+
+all: $(DYLIB)
+
+$(GEN)/iokitmig64.c: $(SDK)/usr/include/device/device.defs
+	@mkdir -p $(GEN)
+	$(MIG) -arch $(ARCH) -isysroot $(SDK) -I$(SDK)/usr/include -DIOKIT -D__LP64__ -novouchers -DKOBJECT_SERVER -server /dev/null \
+		-header $(GEN)/iokitmig64.h -user $@ $<
+$(GEN)/iokitmig64.h: $(GEN)/iokitmig64.c
+
+$(OBJ)/%.o: $(SRCROOT)/%.c $(GEN)/iokitmig64.h
+	$(CC) $(FLAGS) -c $< -o $@
+$(OBJ)/IOTrap.o: $(SRCROOT)/IOTrap.s
+	@mkdir -p $(OBJ)
+	$(CC) $(ARCHFLAGS) -isysroot $(SDK) $(MINVER) \
+		-isystem $(SDK)/System/Library/Frameworks/System.framework/PrivateHeaders -c $< -o $@
+$(OBJ)/iokitmig64.o: $(GEN)/iokitmig64.c
+	$(CC) $(FLAGS) -c $< -o $@
+$(OBJ)/IOPowerSources.o: $(SRCROOT)/debian/IOPowerSources.c
+	@mkdir -p $(OBJ)
+	$(CC) $(FLAGS) -I$(SRCROOT)/ps.subproj -c $< -o $@
+
+NOTICE := $(OBJ)/apsl-notice
+$(NOTICE):
+	@mkdir -p $(OBJ)
+	printf '%s\n' 'This program contains Covered Code under the Apple Public Source License 2.0.' \
+		'Its Source Code is available under that License from https://github.com/blueberrypieos/iokituser.' > $@
+
+$(DYLIB): $(OBJS) $(NOTICE)
+	$(CC) $(BASE_LDFLAGS) -dynamiclib -install_name /$(FW)/Versions/A/IOKit \
+		-compatibility_version 1 -current_version 275 $(OBJS) \
+		-F$(SDK)/System/Library/Frameworks -framework CoreFoundation -Wl,-sectcreate,__TEXT,__source,$(NOTICE) -o $@
+
+install: $(DYLIB)
+	install -d $(ROOT)/$(FW)/Versions/A/Resources
+	ln -sfn A $(ROOT)/$(FW)/Versions/Current
+	ln -sfn Versions/Current/IOKit $(ROOT)/$(FW)/IOKit
+	ln -sfn Versions/Current/Resources $(ROOT)/$(FW)/Resources
+	install -m 644 $(SRCROOT)/debian/Info.plist $(ROOT)/$(FW)/Versions/A/Resources/Info.plist
+	install -m 755 $(DYLIB) $(ROOT)/$(FW)/Versions/A/IOKit
+	install -d $(ROOT)/$(FW)/Versions/A/Headers/ps $(ROOT)/$(FW)/Versions/A/PrivateHeaders
+	cd $(SRCROOT) && install -m 644 $(PUBLIC_HEADERS) $(ROOT)/$(FW)/Versions/A/Headers/
+	cd $(SRCROOT)/ps.subproj && install -m 644 $(PS_HEADERS) $(ROOT)/$(FW)/Versions/A/Headers/ps/
+	cd $(SRCROOT) && install -m 644 $(PRIVATE_HEADERS) $(ROOT)/$(FW)/Versions/A/PrivateHeaders/
+
+.PHONY: all install

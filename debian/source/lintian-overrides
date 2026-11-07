@@ -1,0 +1,2 @@
+superfluous-file-pattern debian/build/obj/derived/iokitmig64.c [debian/copyright:*]
+superfluous-file-pattern debian/build/obj/derived/iokitmig64.h [debian/copyright:*]
